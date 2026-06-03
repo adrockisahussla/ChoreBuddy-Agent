@@ -1,0 +1,19 @@
+# Build output
+bin/
+obj/
+dist/
+publish/
+[Bb]in/
+[Oo]bj/
+
+# IDE / user
+.vs/
+*.user
+*.suo
+
+# Local artifacts
+*.log
+
+# Secrets — real credentials, never commit (see Secrets.example.cs)
+Secrets.cs
+**/Secrets.cs
