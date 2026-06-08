@@ -324,5 +324,21 @@ public class RemoteSync
                 catch (Exception ex) { _log($"Failed to restart Steam: {ex.Message}"); }
             }
         }
+        else if (command.Equals("update", StringComparison.OrdinalIgnoreCase))
+        {
+            // Manager-triggered immediate update check. Bypasses the hourly
+            // poll; AgentUpdater spawns a temp-copy that stops the service,
+            // swaps files, restarts.
+            _log("Push command: update — checking GitHub for newer release");
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var started = await AgentUpdater.CheckAndUpdateAsync(_log, CancellationToken.None);
+                    if (!started) _log("Updater: already up to date or no release");
+                }
+                catch (Exception ex) { _log($"Updater error: {ex.Message}"); }
+            });
+        }
     }
 }

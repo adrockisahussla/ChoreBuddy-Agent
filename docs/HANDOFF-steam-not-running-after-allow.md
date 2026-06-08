@@ -151,8 +151,40 @@ This project is two codebases. They release on different cadences via different 
 
 ### Windows agent
 - **No public distribution yet.** Source lives on the dev machine at `C:\Users\NWI - E02\Desktop\ChoreBuddy-Agent\`. Each PC gets the agent by running `setup.cmd` from that folder while logged in as an admin on the kid's machine. There is no `releases/` for the agent.
-- **Implication:** every fix to the agent is currently a hand-deploy. If we end up with more than a couple of paired PCs we need to either (a) publish a built agent to its own GitHub release or (b) have the mobile app trigger an agent self-update via Firestore (write a `agentVersion` to `firewallControl/{machineId}` and have the agent pull a new build from a URL when it sees a newer version).
-- **Where the running binary actually is on a paired PC:** wherever `setup.cmd` was run from. The wizard's install step does `sc create ChoreBuddyAgent binPath= "<this exe>" --service`, so the service is bound to that specific path. Move the folder and the service breaks until you re-run setup. Worth fixing eventually.
+- **Where the running binary actually is on a paired PC:** wherever `setup.cmd` was run from. The wizard's install step does `sc create ChoreBuddyAgent binPath= "<this exe>" --service`, so the service is bound to that specific path. Move the folder and the service breaks until you re-run setup. **Worth fixing as part of step 2 below** — install to a stable path like `C:\Program Files\ChoreBuddy\` so updates have a predictable target.
+
+#### Recommended self-update plan
+
+**Step 1 — publish the agent to GitHub releases (1 hr).** Push the agent source to its own GitHub repo (`ChoreBuddy-Agent`). On each new build, `dotnet publish -c Release -o dist` then `gh release create vX.Y --repo <you>/ChoreBuddy-Agent dist/*`. Hand-install on each PC by downloading the zip and running `setup.cmd`. This alone removes the "must be on the dev machine to update" pain.
+
+**Step 2 — agent polls GitHub for updates (1 day):**
+
+```
+1. Service polls https://api.github.com/repos/<you>/ChoreBuddy-Agent/releases/latest hourly.
+2. Compare published versionName with own assembly version.
+3. If newer:
+   a. Download new exe to %ProgramData%\ChoreBuddy\update.exe
+   b. Write a tiny self-replace .bat:
+        net stop ChoreBuddyAgent
+        copy /Y "%ProgramData%\ChoreBuddy\update.exe" "<service exe path>"
+        net start ChoreBuddyAgent
+        del "%~f0"
+   c. Spawn the .bat detached and exit cleanly.
+4. Watchdog scheduled task is the safety net — if Start-Service in the
+   .bat fails (corrupt download, etc.), the watchdog brings the service
+   back up via the OLD exe (because the copy was the last step).
+```
+
+C# work lives in `RemoteSync.cs` next to the existing poll loop. ~150 lines + a 10-line embedded batch. Same architecture the mobile `updateService.ts` already uses.
+
+**Step 3 — manager-triggered staged rollout (1–2 days):**
+
+- New Firestore field `firewallControl/{machineId}.requestedAgentVersion` (or `agentVersion` for "currently installed").
+- Mobile Firewall screen shows an **Agent version** column per PC + an "Update all" button.
+- Agent's poll loop sees the field change → runs the same self-replace flow.
+- Lets you stage updates (one kid's PC at a time), pin a problematic build, or hold a rollout until you've tested it.
+
+Pick step 2 as the first real deployable. Step 3 only matters once you have more than ~3 paired PCs.
 
 ### Firestore rules + landing page
 - Rules file: `firestore.rules` in the mobile repo. Deploy with `firebase deploy --only firestore:rules` from the mobile repo root.
