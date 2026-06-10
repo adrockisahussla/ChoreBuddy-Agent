@@ -16,6 +16,10 @@ public class RemoteSync
     readonly Action _onConfigChanged;
     readonly Action _onCommandApplied;
     readonly Action<string?> _onKidIdChanged;
+    ScheduleEnforcer? _enforcer;
+
+    /** Hook for AgentService to attach the enforcer after Start(). */
+    public void AttachEnforcer(ScheduleEnforcer e) => _enforcer = e;
 
     CancellationTokenSource? _cts;
     Task? _pollTask;
@@ -231,6 +235,20 @@ public class RemoteSync
     {
         var apps = _appProvider();
 
+        // Any manual command from the phone (block now / allow now) pauses
+        // the schedule enforcer so the manager's override sticks until they
+        // explicitly resume via the `resume-schedule` push.
+        if (command.Equals("shutoff", StringComparison.OrdinalIgnoreCase) ||
+            command.Equals("allow", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!_config.SchedulePaused)
+            {
+                _config.SchedulePaused = true;
+                ConfigStore.Save(_config);
+                _log("Schedule enforcer paused (manual override)");
+            }
+        }
+
         if (command.Equals("shutoff", StringComparison.OrdinalIgnoreCase))
         {
             WriteOverlayState(true);
@@ -323,6 +341,23 @@ public class RemoteSync
                 try { SteamRestarter.CleanRestart(steamApp.path, _log); }
                 catch (Exception ex) { _log($"Failed to restart Steam: {ex.Message}"); }
             }
+        }
+        else if (command.Equals("reload-schedule", StringComparison.OrdinalIgnoreCase))
+        {
+            // Phone saved a new schedule. Pull it once from Firestore and
+            // store in memory. Does NOT unpause — manager has to explicitly
+            // resume.
+            _log("Push command: reload-schedule");
+            _enforcer?.RequestReload();
+        }
+        else if (command.Equals("resume-schedule", StringComparison.OrdinalIgnoreCase))
+        {
+            // Manager hit "Resume schedule" in the mobile app. Clear the
+            // pause flag + refresh + immediately re-evaluate.
+            _log("Push command: resume-schedule");
+            _config.SchedulePaused = false;
+            ConfigStore.Save(_config);
+            _enforcer?.RequestReload();
         }
         else if (command.Equals("update", StringComparison.OrdinalIgnoreCase))
         {

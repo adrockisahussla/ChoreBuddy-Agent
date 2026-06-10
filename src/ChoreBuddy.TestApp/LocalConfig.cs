@@ -46,6 +46,18 @@ public class LocalConfig
     public string? IdToken { get; set; }
     /** Epoch ms when IdToken expires. AuthClient refreshes a minute early. */
     public long IdTokenExpiresAt { get; set; }
+
+    // --- Schedule enforcement (v1.0.2) ---
+    /** True after a manual shutoff/allow command. The local schedule
+     *  enforcer skips evaluation while paused, so a manager override
+     *  always wins. Cleared only by an explicit `resume-schedule` push. */
+    public bool SchedulePaused { get; set; }
+    /** "yyyy-MM-dd" — local day the cap counter belongs to. Resets when
+     *  the enforcer crosses midnight. */
+    public string? ScheduleCapDay { get; set; }
+    /** Accumulated "allow" seconds inside the current ScheduleCapDay
+     *  under cap mode. Counted by the local 60s tick. */
+    public int ScheduleCapUsedSeconds { get; set; }
 }
 
 public static class ConfigStore

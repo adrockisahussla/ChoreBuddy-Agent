@@ -18,6 +18,7 @@ public class AgentService : BackgroundService
     LocalConfig _config = null!;
     AuthClient? _auth;
     RemoteSync? _sync;
+    ScheduleEnforcer? _enforcer;
 
     record AppEntry(string Key, string Label, string DefaultPath, bool IsLauncher);
 
@@ -48,6 +49,11 @@ public class AgentService : BackgroundService
                 kidId => Log($"Pairing changed: {kidId ?? "(unpaired)"}"));
 
             _sync.Start();
+
+            _enforcer = new ScheduleEnforcer(_config, _auth, BuildAppList, Log);
+            _sync.AttachEnforcer(_enforcer);
+            _enforcer.Start();
+
             Log($"Service running (agent v{AgentUpdater.CurrentVersionString}). Commands via RTDB push.");
 
             // Self-update watcher — checks GitHub releases shortly after start
@@ -65,6 +71,7 @@ public class AgentService : BackgroundService
         }
         finally
         {
+            _enforcer?.Stop();
             _sync?.Stop();
             Log("=== AgentService stopped ===");
         }
