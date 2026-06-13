@@ -58,6 +58,13 @@ public class LocalConfig
     /** Accumulated "allow" seconds inside the current ScheduleCapDay
      *  under cap mode. Counted by the local 60s tick. */
     public int ScheduleCapUsedSeconds { get; set; }
+
+    // --- Banked screen-time (v1.0.4) ---
+    /** Epoch ms until which the kid's redeemed "extra time" keeps games
+     *  allowed, overriding the normal schedule. 0 = no bonus active. The
+     *  kid grants this themselves from the warning toast, spending minutes
+     *  from their users/{kidId}.minutesRemaining wallet. */
+    public long BonusUntilUnix { get; set; }
 }
 
 public static class ConfigStore

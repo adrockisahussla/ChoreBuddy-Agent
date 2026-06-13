@@ -28,7 +28,7 @@ public static class OverlayApp
                 if (warn.WarnId != 0 && warn.WarnId != lastWarnId)
                 {
                     lastWarnId = warn.WarnId;
-                    if (warn.WarnSeconds > 0) new WarningToast(warn.WarnSeconds, warn.KidName).Show();
+                    if (warn.WarnSeconds > 0) new WarningToast(warn.WarnSeconds, warn.KidName, warn.AvailableMinutes).Show();
                 }
 
                 // Detect transition: blocked -> unblocked → show "restored" toast
@@ -128,13 +128,23 @@ public class UnlockToast : Form
     }
 }
 
-/** Corner toast warning the kid their game time is about to be cut off.
- *  Amber, bottom-right, auto-dismisses after ~6 s. Modeled on UnlockToast. */
+/** Interactive corner toast: warns the kid game time is about to end and,
+ *  if they have banked minutes, lets them choose how many to spend to keep
+ *  playing. "Use extra time" writes an ExtendRequest the service consumes;
+ *  "OK" just dismisses and lets the machine lock at the cutoff. */
 public class WarningToast : Form
 {
-    public WarningToast(int remainingSeconds, string kidName)
+    int _choice;
+    readonly int _available;
+    Label _choiceLabel = null!;
+    Button _useBtn = null!;
+
+    public WarningToast(int remainingSeconds, string kidName, int availableMinutes)
     {
         int minutes = Math.Max(1, (int)Math.Ceiling(remainingSeconds / 60.0));
+        _available = Math.Max(0, availableMinutes);
+        _choice = Math.Min(15, _available);
+        if (_choice == 0 && _available > 0) _choice = _available;
 
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
@@ -145,46 +155,131 @@ public class WarningToast : Form
         Opacity = 0;
 
         var who = string.IsNullOrEmpty(kidName) ? "" : $"{kidName}, ";
-        var label = new Label
+        var title = new Label
         {
             Text = $"⏰  {who}game time ends in {minutes} minute{(minutes == 1 ? "" : "s")}",
             Font = new Font("Segoe UI", 15, FontStyle.Bold),
             ForeColor = Color.White,
-            Dock = DockStyle.Fill,
+            AutoSize = false,
             TextAlign = ContentAlignment.MiddleCenter,
-            BackColor = Color.Transparent
+            BackColor = Color.Transparent,
+            Bounds = new Rectangle(16, 14, 428, 30),
         };
-        Controls.Add(label);
+        Controls.Add(title);
 
         Width = 460;
-        Height = 76;
         var screen = Screen.PrimaryScreen!.WorkingArea; // excludes taskbar
+
+        if (_available <= 0)
+        {
+            // No banked time — just an acknowledge button.
+            Height = 96;
+            var ok = MakeButton("OK", 180, 52, Color.White, Color.FromArgb(180, 120, 0));
+            ok.Click += (s, e) => Close();
+            Controls.Add(ok);
+        }
+        else
+        {
+            Height = 196;
+            var bank = new Label
+            {
+                Text = $"You have {_available} min banked",
+                Font = new Font("Segoe UI", 11, FontStyle.Regular),
+                ForeColor = Color.White, BackColor = Color.Transparent,
+                AutoSize = false, TextAlign = ContentAlignment.MiddleCenter,
+                Bounds = new Rectangle(16, 46, 428, 22),
+            };
+            Controls.Add(bank);
+
+            // Stepper: −  [N min]  +
+            var minus = MakeButton("−", 56, 44, Color.White, Color.FromArgb(180, 120, 0));
+            minus.Location = new Point(70, 76);
+            minus.Click += (s, e) => Adjust(-5);
+            Controls.Add(minus);
+
+            _choiceLabel = new Label
+            {
+                Font = new Font("Segoe UI", 14, FontStyle.Bold),
+                ForeColor = Color.White, BackColor = Color.Transparent,
+                AutoSize = false, TextAlign = ContentAlignment.MiddleCenter,
+                Bounds = new Rectangle(132, 76, 196, 44),
+            };
+            Controls.Add(_choiceLabel);
+
+            var plus = MakeButton("+", 56, 44, Color.White, Color.FromArgb(180, 120, 0));
+            plus.Location = new Point(334, 76);
+            plus.Click += (s, e) => Adjust(5);
+            Controls.Add(plus);
+
+            _useBtn = MakeButton("", 250, 50, Color.FromArgb(34, 197, 94), Color.White);
+            _useBtn.Location = new Point(40, 130);
+            _useBtn.Click += (s, e) => UseExtra();
+            Controls.Add(_useBtn);
+
+            var ok = MakeButton("OK", 120, 50, Color.White, Color.FromArgb(180, 120, 0));
+            ok.Location = new Point(300, 130);
+            ok.Click += (s, e) => Close();
+            Controls.Add(ok);
+
+            RefreshChoice();
+        }
+
         Left = screen.Right - Width - 20;
         Top = screen.Bottom - Height - 20;
 
         var fadeIn = new System.Windows.Forms.Timer { Interval = 25 };
-        fadeIn.Tick += (s, e) =>
-        {
-            if (Opacity < 0.96) Opacity += 0.1;
-            else { Opacity = 0.96; fadeIn.Stop(); }
-        };
+        fadeIn.Tick += (s, e) => { if (Opacity < 0.97) Opacity += 0.12; else { Opacity = 0.97; fadeIn.Stop(); } };
         fadeIn.Start();
 
-        var dismiss = new System.Windows.Forms.Timer { Interval = 6000 };
-        dismiss.Tick += (s, e) =>
-        {
-            dismiss.Stop();
-            var fadeOut = new System.Windows.Forms.Timer { Interval = 25 };
-            fadeOut.Tick += (s2, e2) =>
-            {
-                if (Opacity > 0.05) Opacity -= 0.1;
-                else { fadeOut.Stop(); Close(); }
-            };
-            fadeOut.Start();
-        };
+        // Interactive toasts linger longer so the kid can decide.
+        var dismiss = new System.Windows.Forms.Timer { Interval = _available > 0 ? 30000 : 8000 };
+        dismiss.Tick += (s, e) => { dismiss.Stop(); Close(); };
         dismiss.Start();
+    }
 
-        Click += (s, e) => Close();
-        label.Click += (s, e) => Close();
+    static Button MakeButton(string text, int w, int h, Color back, Color fore)
+    {
+        var b = new Button
+        {
+            Text = text, Size = new Size(w, h),
+            FlatStyle = FlatStyle.Flat, BackColor = back, ForeColor = fore,
+            Font = new Font("Segoe UI", 12, FontStyle.Bold), Cursor = Cursors.Hand,
+        };
+        b.FlatAppearance.BorderSize = 0;
+        return b;
+    }
+
+    void Adjust(int delta)
+    {
+        _choice = Math.Max(5, Math.Min(_available, _choice + delta));
+        RefreshChoice();
+    }
+
+    void RefreshChoice()
+    {
+        _choiceLabel.Text = $"{_choice} min";
+        _useBtn.Text = $"▶ Use {_choice} min";
+    }
+
+    void UseExtra()
+    {
+        ExtendRequest.Write(new ExtendRequestData
+        {
+            Minutes = _choice,
+            Id = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+        });
+        // Acknowledge and close; the service applies it within ~2s.
+        foreach (Control c in Controls) c.Visible = false;
+        var done = new Label
+        {
+            Text = $"✓ Added {_choice} min — keep playing!",
+            Font = new Font("Segoe UI", 14, FontStyle.Bold),
+            ForeColor = Color.White, BackColor = Color.Transparent,
+            Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter,
+        };
+        Controls.Add(done);
+        var close = new System.Windows.Forms.Timer { Interval = 1600 };
+        close.Tick += (s, e) => { close.Stop(); Close(); };
+        close.Start();
     }
 }

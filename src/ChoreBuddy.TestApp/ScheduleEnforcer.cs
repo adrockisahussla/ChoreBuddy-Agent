@@ -61,6 +61,9 @@ public class ScheduleEnforcer
     // (or play is shut off), so the toast shows once per play session.
     const int WarnLeadSeconds = 300;
     bool _warnArmed = true;
+    // Cached banked minutes (users/{kidId}.minutesRemaining) shown on the
+    // warning toast and spent when the kid taps "Use extra time".
+    int _availableMinutes;
 
     public ScheduleEnforcer(
         LocalConfig config,
@@ -79,6 +82,7 @@ public class ScheduleEnforcer
         Stop();
         _cts = new CancellationTokenSource();
         _ = Task.Run(() => TickLoop(_cts.Token));
+        _ = Task.Run(() => ExtendLoop(_cts.Token));
         _log("Schedule enforcer started");
     }
 
@@ -138,7 +142,8 @@ public class ScheduleEnforcer
 
             var body = await resp.Content.ReadAsStringAsync(ct);
             _schedule = ParseSchedule(body);
-            _log($"Enforcer: schedule loaded ({_schedule?.Days.Count ?? 0} day rules)");
+            _availableMinutes = await GetMinutesAsync(ct);
+            _log($"Enforcer: schedule loaded ({_schedule?.Days.Count ?? 0} day rules), {_availableMinutes} min banked");
         }
         catch (Exception ex) { _log($"Enforcer: reload failed — {ex.Message}"); }
     }
@@ -171,6 +176,22 @@ public class ScheduleEnforcer
         {
             _config.ScheduleCapDay = localDayKey;
             _config.ScheduleCapUsedSeconds = 0;
+            ConfigStore.Save(_config);
+        }
+
+        // Kid-purchased bonus time overrides the normal schedule until it
+        // runs out. Warn 5 min before the bonus itself ends (so they can
+        // top up again if they have more banked).
+        var nowMs = DateTimeOffset.Now.ToUnixTimeMilliseconds();
+        if (_config.BonusUntilUnix > nowMs)
+        {
+            ApplyState("allow", "bonus time");
+            MaybeWarn((int)((_config.BonusUntilUnix - nowMs) / 1000));
+            return;
+        }
+        if (_config.BonusUntilUnix != 0)
+        {
+            _config.BonusUntilUnix = 0;
             ConfigStore.Save(_config);
         }
 
@@ -230,10 +251,106 @@ public class ScheduleEnforcer
                 WarnSeconds = remainingSec,
                 WarnId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 KidName = OverlayState.Read().KidName,
+                AvailableMinutes = _availableMinutes,
             });
-            _log($"Enforcer: 5-min warning written ({remainingSec}s left)");
+            _log($"Enforcer: warning written ({remainingSec}s left, {_availableMinutes} min banked)");
         }
         catch (Exception ex) { _log($"Enforcer: warn write failed — {ex.Message}"); }
+    }
+
+    // ---- Kid "use extra time" → extend session + spend banked minutes ----
+
+    async Task ExtendLoop(CancellationToken ct)
+    {
+        int sinceRefresh = 0;
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await ProcessExtendRequestAsync(ct);
+                // Keep the banked balance reasonably fresh for the toast.
+                if (++sinceRefresh >= 15) { sinceRefresh = 0; _availableMinutes = await GetMinutesAsync(ct); }
+            }
+            catch (Exception ex) { _log($"Enforcer: extend loop error — {ex.Message}"); }
+            try { await Task.Delay(2000, ct); } catch { return; }
+        }
+    }
+
+    async Task ProcessExtendRequestAsync(CancellationToken ct)
+    {
+        var req = ExtendRequest.Read();
+        if (req == null || req.Minutes <= 0) return;
+        ExtendRequest.Clear();
+
+        var avail = await GetMinutesAsync(ct);
+        var mins = Math.Min(req.Minutes, avail);
+        if (mins <= 0) { _availableMinutes = avail; return; }
+
+        var now = DateTimeOffset.Now.ToUnixTimeMilliseconds();
+        var basis = Math.Max(now, _config.BonusUntilUnix); // stack onto any active bonus
+        _config.BonusUntilUnix = basis + (long)mins * 60000L;
+        ConfigStore.Save(_config);
+        _warnArmed = true; // so it warns again near the new end
+
+        await AddMinutesAsync(-mins, ct);
+        ApplyState("allow", $"kid used {mins} min extra");
+        _log($"Enforcer: +{mins} min bonus (until {_config.BonusUntilUnix}), {_availableMinutes} min left");
+    }
+
+    async Task AuthorizeAsync(HttpRequestMessage req, CancellationToken ct)
+    {
+        if (_auth != null && _auth.IsSignedIn)
+        {
+            try
+            {
+                var token = await _auth.GetValidIdTokenAsync(ct);
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            }
+            catch { /* server will 401; caller tolerates */ }
+        }
+    }
+
+    async Task<int> GetMinutesAsync(CancellationToken ct)
+    {
+        var kid = _config.KidId;
+        if (string.IsNullOrEmpty(kid)) return 0;
+        try
+        {
+            var url = $"https://firestore.googleapis.com/v1/projects/{ProjectId}/databases/(default)/documents/users/{Uri.EscapeDataString(kid)}";
+            var req = new HttpRequestMessage(HttpMethod.Get, url);
+            await AuthorizeAsync(req, ct);
+            var resp = await http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode) return _availableMinutes;
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("fields", out var f)) return 0;
+            if (!f.TryGetProperty("minutesRemaining", out var m)) return 0;
+            if (m.TryGetProperty("integerValue", out var iv) && long.TryParse(iv.GetString(), out var n)) return (int)Math.Max(0, n);
+            if (m.TryGetProperty("doubleValue", out var dv)) return (int)Math.Max(0, dv.GetDouble());
+            return 0;
+        }
+        catch { return _availableMinutes; }
+    }
+
+    async Task AddMinutesAsync(int delta, CancellationToken ct)
+    {
+        var kid = _config.KidId;
+        if (string.IsNullOrEmpty(kid)) return;
+        try
+        {
+            var current = await GetMinutesAsync(ct);
+            var next = Math.Max(0, current + delta);
+            var url = $"https://firestore.googleapis.com/v1/projects/{ProjectId}/databases/(default)/documents/users/{Uri.EscapeDataString(kid)}?updateMask.fieldPaths=minutesRemaining";
+            var body = $"{{\"fields\":{{\"minutesRemaining\":{{\"integerValue\":\"{next}\"}}}}}}";
+            var req = new HttpRequestMessage(HttpMethod.Patch, url)
+            {
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
+            };
+            await AuthorizeAsync(req, ct);
+            await http.SendAsync(req, ct);
+            _availableMinutes = next;
+        }
+        catch (Exception ex) { _log($"Enforcer: minutes write failed — {ex.Message}"); }
     }
 
     void ApplyState(string target, string reason)
