@@ -56,6 +56,12 @@ public class ScheduleEnforcer
     GameSchedule? _schedule;
     string? _currentState; // "allow" / "shutoff" — what we last enforced
 
+    // 5-minutes-before-cutoff warning. Armed = eligible to fire. We disarm
+    // after firing and re-arm whenever there's more than the lead time left
+    // (or play is shut off), so the toast shows once per play session.
+    const int WarnLeadSeconds = 300;
+    bool _warnArmed = true;
+
     public ScheduleEnforcer(
         LocalConfig config,
         AuthClient? auth,
@@ -153,6 +159,7 @@ public class ScheduleEnforcer
         {
             // Day disabled → enforce shutoff.
             ApplyState("shutoff", "day disabled");
+            _warnArmed = true;
             return;
         }
 
@@ -174,21 +181,59 @@ public class ScheduleEnforcer
             var endMin = ToMin(day.End);
             var inWindow = nowMin >= startMin && nowMin < endMin;
             ApplyState(inWindow ? "allow" : "shutoff", inWindow ? "in window" : "outside window");
+            if (inWindow) MaybeWarn((endMin - nowMin) * 60 - now.Second);
+            else _warnArmed = true;
         }
         else // cap
         {
             var capSeconds = (int)((day.MaxHours ?? 0) * 3600);
-            if (capSeconds <= 0) { ApplyState("shutoff", "cap=0"); return; }
+            if (capSeconds <= 0) { ApplyState("shutoff", "cap=0"); _warnArmed = true; return; }
             if (_config.ScheduleCapUsedSeconds >= capSeconds)
             {
                 ApplyState("shutoff", "cap reached");
+                _warnArmed = true;
                 return;
             }
             ApplyState("allow", $"cap {_config.ScheduleCapUsedSeconds}/{capSeconds}s used");
+            MaybeWarn(capSeconds - _config.ScheduleCapUsedSeconds);
             // Burn 60 s for this tick (the tick interval).
             _config.ScheduleCapUsedSeconds = Math.Min(capSeconds, _config.ScheduleCapUsedSeconds + 60);
             ConfigStore.Save(_config);
         }
+    }
+
+    /** Fire the corner toast once when we cross into the final
+     *  WarnLeadSeconds of a play session. Re-arms once there's more than
+     *  the lead time left again (or play stops). */
+    void MaybeWarn(int remainingSec)
+    {
+        if (remainingSec > 0 && remainingSec <= WarnLeadSeconds)
+        {
+            if (_warnArmed)
+            {
+                _warnArmed = false;
+                WriteWarn(remainingSec);
+            }
+        }
+        else
+        {
+            _warnArmed = true;
+        }
+    }
+
+    void WriteWarn(int remainingSec)
+    {
+        try
+        {
+            WarnState.Write(new WarnStateData
+            {
+                WarnSeconds = remainingSec,
+                WarnId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                KidName = OverlayState.Read().KidName,
+            });
+            _log($"Enforcer: 5-min warning written ({remainingSec}s left)");
+        }
+        catch (Exception ex) { _log($"Enforcer: warn write failed — {ex.Message}"); }
     }
 
     void ApplyState(string target, string reason)
