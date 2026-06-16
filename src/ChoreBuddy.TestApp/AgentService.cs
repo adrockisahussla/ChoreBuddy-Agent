@@ -19,6 +19,7 @@ public class AgentService : BackgroundService
     AuthClient? _auth;
     RemoteSync? _sync;
     ScheduleEnforcer? _enforcer;
+    UsageReporter? _usage;
 
     record AppEntry(string Key, string Label, string DefaultPath, bool IsLauncher);
 
@@ -54,6 +55,11 @@ public class AgentService : BackgroundService
             _sync.AttachEnforcer(_enforcer);
             _enforcer.Start();
 
+            // Desktop telemetry — game sessions + screen-time used + heartbeat,
+            // reported to deviceUsage/gameSessions for the manager dashboard.
+            _usage = new UsageReporter(_config, _auth, BuildAppList, Log);
+            _usage.Start();
+
             Log($"Service running (agent v{AgentUpdater.CurrentVersionString}). Commands via RTDB push.");
 
             // Self-update watcher — checks GitHub releases shortly after start
@@ -71,6 +77,7 @@ public class AgentService : BackgroundService
         }
         finally
         {
+            _usage?.Stop();
             _enforcer?.Stop();
             _sync?.Stop();
             Log("=== AgentService stopped ===");

@@ -356,8 +356,12 @@ public class ScheduleEnforcer
     void ApplyState(string target, string reason)
     {
         if (_currentState == target) return;
+        var prev = _currentState;
         _currentState = target;
         _log($"Enforcer: → {target} ({reason})");
+        // Count a "lock event" only on a real allow → shutoff transition
+        // (not the initial cold-start block), for the dashboard.
+        if (target == "shutoff" && prev == "allow") UsageReporter.NoteLock();
         try
         {
             if (target == "shutoff") FirewallHelpers.BlockAllConfigured(_config, _apps(), _log);
