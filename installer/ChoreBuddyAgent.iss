@@ -4,10 +4,10 @@
 ; runs the setup wizard for sign-in, and offers an uninstaller.
 
 #define MyAppName "ChoreBuddy Agent"
-#define MyAppVersion "1.0.6"
+#define MyAppVersion "1.0.7"
 #define MyAppPublisher "ChoreBuddy"
 #define MyAppExeName "ChoreBuddy.TestApp.exe"
-#define SourceDir "..\dist-1.0.6"
+#define SourceDir "..\dist-1.0.7"
 
 [Setup]
 AppId={{8B2A6E3F-3F4C-4E29-8F8C-7B5D7C9E3F11}
