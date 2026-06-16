@@ -4,6 +4,35 @@ using System.Windows.Forms;
 
 namespace ChoreBuddy.TestApp;
 
+/** Tracks which one-shot notice/message ids the overlay has already shown.
+ *  Stored in LocalApplicationData (per-user, writable by the overlay) so we
+ *  never write the ProgramData state files (owned by the system/updater). */
+public class OverlaySeenData { public long Notice { get; set; } public long Message { get; set; } }
+
+static class OverlaySeen
+{
+    static readonly string Path_ = System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ChoreBuddy", "overlay-seen.json");
+
+    public static OverlaySeenData Load()
+    {
+        try { if (System.IO.File.Exists(Path_)) return System.Text.Json.JsonSerializer.Deserialize<OverlaySeenData>(System.IO.File.ReadAllText(Path_)) ?? new OverlaySeenData(); }
+        catch { }
+        return new OverlaySeenData();
+    }
+
+    public static void Save(OverlaySeenData d)
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path_)!);
+            System.IO.File.WriteAllText(Path_, System.Text.Json.JsonSerializer.Serialize(d));
+        }
+        catch { }
+    }
+}
+
 public static class OverlayApp
 {
     public static void Run()
@@ -14,6 +43,10 @@ public static class OverlayApp
         if (!createdNew) return;
 
         ApplicationConfiguration.Initialize();
+
+        // Which notice/message ids we've already shown — persisted in a
+        // USER-writable spot so we never touch the system-owned ProgramData files.
+        var seen = OverlaySeen.Load();
 
         OverlayForm? form = null;
         bool prevBlocked = false;
@@ -36,19 +69,22 @@ public static class OverlayApp
                     if (warn.WarnSeconds > 0) new WarningToast(warn.WarnSeconds, warn.KidName, warn.AvailableMinutes).Show();
                 }
 
-                // "Agent updated" notice — consume-on-show so it fires once.
+                // "Agent updated" notice — show once per id. We DON'T write the
+                // notice file here (it lives in ProgramData, written by the
+                // system/updater — a user-session overlay can't overwrite it).
+                // Instead we remember the last shown id in a user-writable file.
                 var notice = NoticeState.Read();
-                if (notice.NoticeId != 0)
+                if (notice.NoticeId != 0 && notice.NoticeId != seen.Notice)
                 {
-                    NoticeState.Write(new NoticeStateData());
+                    seen.Notice = notice.NoticeId; OverlaySeen.Save(seen);
                     new UpdatedToast(notice.Message).Show();
                 }
 
-                // Manager broadcast message — consume-on-show.
+                // Manager broadcast message — show once per id (same approach).
                 var msg = MessageState.Read();
-                if (msg.MessageId != 0)
+                if (msg.MessageId != 0 && msg.MessageId != seen.Message)
                 {
-                    MessageState.Write(new MessageStateData());
+                    seen.Message = msg.MessageId; OverlaySeen.Save(seen);
                     if (!string.IsNullOrWhiteSpace(msg.Text)) new MessageToast(msg.Text).Show();
                 }
 
