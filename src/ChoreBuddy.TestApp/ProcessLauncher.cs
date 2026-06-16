@@ -18,7 +18,7 @@ namespace ChoreBuddy.TestApp;
  *  is correct because we're already in the user's session. */
 public static class ProcessLauncher
 {
-    public static bool LaunchInActiveSession(string exePath, Action<string> log)
+    public static bool LaunchInActiveSession(string exePath, Action<string> log, string? args = null)
     {
         if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath))
         {
@@ -40,7 +40,7 @@ public static class ProcessLauncher
             if (err == ERROR_PRIVILEGE_NOT_HELD || err == ERROR_ACCESS_DENIED)
             {
                 log($"LaunchInActiveSession: not SYSTEM (err {err}), launching directly");
-                return LaunchDirect(exePath, log);
+                return LaunchDirect(exePath, log, args);
             }
             log($"LaunchInActiveSession: WTSQueryUserToken failed (err {err})");
             return false;
@@ -69,7 +69,7 @@ public static class ProcessLauncher
             var flags = CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE;
 
             // Quote the path; commandLine must be a writable buffer for the API.
-            var commandLine = $"\"{exePath}\"";
+            var commandLine = string.IsNullOrEmpty(args) ? $"\"{exePath}\"" : $"\"{exePath}\" {args}";
 
             if (!CreateProcessAsUser(primaryToken, null, commandLine,
                     IntPtr.Zero, IntPtr.Zero, false, flags, envBlock, workingDir,
@@ -92,13 +92,14 @@ public static class ProcessLauncher
         }
     }
 
-    static bool LaunchDirect(string exePath, Action<string> log)
+    static bool LaunchDirect(string exePath, Action<string> log, string? args = null)
     {
         try
         {
             Process.Start(new ProcessStartInfo
             {
                 FileName = exePath,
+                Arguments = args ?? "",
                 WorkingDirectory = Path.GetDirectoryName(exePath) ?? Environment.SystemDirectory,
                 UseShellExecute = true
             });

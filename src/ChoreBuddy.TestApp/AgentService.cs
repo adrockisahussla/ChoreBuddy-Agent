@@ -60,6 +60,17 @@ public class AgentService : BackgroundService
             _usage = new UsageReporter(_config, _auth, BuildAppList, Log);
             _usage.Start();
 
+            // Ensure the overlay UI is running in the user's session. It's
+            // killed during self-updates (and gone after a reboot until login);
+            // relaunching here keeps the warning/updated toasts working. A
+            // single-instance mutex in the overlay makes a duplicate self-exit.
+            try
+            {
+                var overlayExe = Path.Combine(AppContext.BaseDirectory, "ChoreBuddy.TestApp.exe");
+                ProcessLauncher.LaunchInActiveSession(overlayExe, Log, "--overlay");
+            }
+            catch (Exception ex) { Log($"Overlay relaunch failed: {ex.Message}"); }
+
             Log($"Service running (agent v{AgentUpdater.CurrentVersionString}). Commands via RTDB push.");
 
             // Self-update watcher — checks GitHub releases shortly after start

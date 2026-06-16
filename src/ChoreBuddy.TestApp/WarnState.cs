@@ -83,6 +83,51 @@ public static class ExtendRequest
     }
 }
 
+/** One-shot "agent was updated" notice, written by the updater after it
+ *  swaps in a new build, read+consumed by the overlay UI which shows a
+ *  toast. Consume-on-show (overlay zeroes NoticeId once shown) so it fires
+ *  exactly once regardless of overlay restarts during the update. */
+public class NoticeStateData
+{
+    [JsonPropertyName("noticeId")]
+    public long NoticeId { get; set; }
+
+    [JsonPropertyName("message")]
+    public string Message { get; set; } = "";
+}
+
+public static class NoticeState
+{
+    static readonly string Dir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "ChoreBuddy");
+    public static readonly string FilePath = Path.Combine(Dir, "notice-state.json");
+    static readonly object _lock = new();
+
+    public static NoticeStateData Read()
+    {
+        try
+        {
+            if (!File.Exists(FilePath)) return new NoticeStateData();
+            string json;
+            lock (_lock) { json = File.ReadAllText(FilePath); }
+            return JsonSerializer.Deserialize<NoticeStateData>(json) ?? new NoticeStateData();
+        }
+        catch { return new NoticeStateData(); }
+    }
+
+    public static void Write(NoticeStateData data)
+    {
+        try
+        {
+            Directory.CreateDirectory(Dir);
+            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+            lock (_lock) { File.WriteAllText(FilePath, json); }
+        }
+        catch { }
+    }
+}
+
 public static class WarnState
 {
     static readonly string Dir = Path.Combine(

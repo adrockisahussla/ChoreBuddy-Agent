@@ -8,6 +8,11 @@ public static class OverlayApp
 {
     public static void Run()
     {
+        // Single instance — the service relaunches the overlay on startup,
+        // so a duplicate (e.g. one already started via HKCU\Run) just exits.
+        using var instance = new System.Threading.Mutex(true, "Global\\ChoreBuddyOverlay", out var createdNew);
+        if (!createdNew) return;
+
         ApplicationConfiguration.Initialize();
 
         OverlayForm? form = null;
@@ -29,6 +34,14 @@ public static class OverlayApp
                 {
                     lastWarnId = warn.WarnId;
                     if (warn.WarnSeconds > 0) new WarningToast(warn.WarnSeconds, warn.KidName, warn.AvailableMinutes).Show();
+                }
+
+                // "Agent updated" notice — consume-on-show so it fires once.
+                var notice = NoticeState.Read();
+                if (notice.NoticeId != 0)
+                {
+                    NoticeState.Write(new NoticeStateData());
+                    new UpdatedToast(notice.Message).Show();
                 }
 
                 // Detect transition: blocked -> unblocked → show "restored" toast
@@ -110,6 +123,64 @@ public class UnlockToast : Form
         fadeIn.Start();
 
         var dismiss = new System.Windows.Forms.Timer { Interval = 3000 };
+        dismiss.Tick += (s, e) =>
+        {
+            dismiss.Stop();
+            var fadeOut = new System.Windows.Forms.Timer { Interval = 25 };
+            fadeOut.Tick += (s2, e2) =>
+            {
+                if (Opacity > 0.05) Opacity -= 0.1;
+                else { fadeOut.Stop(); Close(); }
+            };
+            fadeOut.Start();
+        };
+        dismiss.Start();
+
+        Click += (s, e) => Close();
+        label.Click += (s, e) => Close();
+    }
+}
+
+/** Brief banner shown after the agent self-updates. Same shape as
+ *  UnlockToast but brand-purple and a touch longer on screen. */
+public class UpdatedToast : Form
+{
+    public UpdatedToast(string message)
+    {
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        TopMost = true;
+        StartPosition = FormStartPosition.Manual;
+        BackColor = Color.FromArgb(124, 58, 237); // brand purple
+        DoubleBuffered = true;
+        Opacity = 0;
+
+        var label = new Label
+        {
+            Text = "✓  " + (string.IsNullOrEmpty(message) ? "ChoreBuddy Agent updated" : message),
+            Font = new Font("Segoe UI", 15, FontStyle.Bold),
+            ForeColor = Color.White,
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter,
+            BackColor = Color.Transparent
+        };
+        Controls.Add(label);
+
+        Width = 620;
+        Height = 76;
+        var screen = Screen.PrimaryScreen!.Bounds;
+        Left = screen.Left + (screen.Width - Width) / 2;
+        Top = screen.Top + 100;
+
+        var fadeIn = new System.Windows.Forms.Timer { Interval = 25 };
+        fadeIn.Tick += (s, e) =>
+        {
+            if (Opacity < 0.95) Opacity += 0.1;
+            else { Opacity = 0.95; fadeIn.Stop(); }
+        };
+        fadeIn.Start();
+
+        var dismiss = new System.Windows.Forms.Timer { Interval = 4500 };
         dismiss.Tick += (s, e) =>
         {
             dismiss.Stop();

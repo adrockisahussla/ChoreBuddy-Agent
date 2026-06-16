@@ -21,7 +21,7 @@ namespace ChoreBuddy.TestApp;
 public static class AgentUpdater
 {
     // Bump this with every release; the GitHub release tag must match (vX.Y.Z).
-    public const string CurrentVersionString = "1.0.5";
+    public const string CurrentVersionString = "1.0.6";
 
     const string Owner = "adrockisahussla";
     const string Repo = "ChoreBuddy-Agent";
@@ -159,6 +159,20 @@ public static class AgentUpdater
         Thread.Sleep(1000);
 
         CopyDir(stagingDir, installDir, log);
+
+        // Leave a one-shot notice so the overlay shows "updated" once the
+        // service restarts and relaunches it. CurrentVersionString here is
+        // the NEW build's (this runner is a copy of the freshly-staged exe).
+        try
+        {
+            NoticeState.Write(new NoticeStateData
+            {
+                NoticeId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                Message = $"ChoreBuddy Agent updated to v{CurrentVersionString}",
+            });
+            log($"update notice queued (v{CurrentVersionString})");
+        }
+        catch { }
 
         RunSc("start " + ServiceName, log);
         log("--apply-update: done");
