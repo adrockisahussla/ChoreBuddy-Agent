@@ -44,6 +44,14 @@ public static class OverlayApp
                     new UpdatedToast(notice.Message).Show();
                 }
 
+                // Manager broadcast message — consume-on-show.
+                var msg = MessageState.Read();
+                if (msg.MessageId != 0)
+                {
+                    MessageState.Write(new MessageStateData());
+                    if (!string.IsNullOrWhiteSpace(msg.Text)) new MessageToast(msg.Text).Show();
+                }
+
                 // Detect transition: blocked -> unblocked → show "restored" toast
                 if (prevBlocked && !state.Blocked)
                 {
@@ -196,6 +204,69 @@ public class UpdatedToast : Form
 
         Click += (s, e) => Close();
         label.Click += (s, e) => Close();
+    }
+}
+
+/** A message from the manager, shown centered until clicked (or 12s).
+ *  Blue banner, wraps for longer text. */
+public class MessageToast : Form
+{
+    public MessageToast(string text)
+    {
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        TopMost = true;
+        StartPosition = FormStartPosition.Manual;
+        BackColor = Color.FromArgb(37, 99, 235); // blue
+        DoubleBuffered = true;
+        Opacity = 0;
+
+        var title = new Label
+        {
+            Text = "💬  Message from your manager",
+            Font = new Font("Segoe UI", 11, FontStyle.Bold),
+            ForeColor = Color.FromArgb(220, 230, 255),
+            Dock = DockStyle.Top,
+            Height = 30,
+            TextAlign = ContentAlignment.MiddleCenter,
+            BackColor = Color.Transparent,
+        };
+        var body = new Label
+        {
+            Text = text,
+            Font = new Font("Segoe UI", 16, FontStyle.Bold),
+            ForeColor = Color.White,
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter,
+            BackColor = Color.Transparent,
+            Padding = new Padding(18, 0, 18, 10),
+        };
+        Controls.Add(body);
+        Controls.Add(title);
+
+        Width = 680;
+        Height = 130;
+        var screen = Screen.PrimaryScreen!.Bounds;
+        Left = screen.Left + (screen.Width - Width) / 2;
+        Top = screen.Top + 90;
+
+        var fadeIn = new System.Windows.Forms.Timer { Interval = 25 };
+        fadeIn.Tick += (s, e) => { if (Opacity < 0.96) Opacity += 0.08; else { Opacity = 0.96; fadeIn.Stop(); } };
+        fadeIn.Start();
+
+        var dismiss = new System.Windows.Forms.Timer { Interval = 12000 };
+        dismiss.Tick += (s, e) =>
+        {
+            dismiss.Stop();
+            var fadeOut = new System.Windows.Forms.Timer { Interval = 25 };
+            fadeOut.Tick += (s2, e2) => { if (Opacity > 0.05) Opacity -= 0.1; else { fadeOut.Stop(); Close(); } };
+            fadeOut.Start();
+        };
+        dismiss.Start();
+
+        Click += (s, e) => Close();
+        title.Click += (s, e) => Close();
+        body.Click += (s, e) => Close();
     }
 }
 

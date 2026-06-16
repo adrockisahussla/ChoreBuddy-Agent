@@ -128,6 +128,50 @@ public static class NoticeState
     }
 }
 
+/** One-shot manager broadcast message, written by the service when a
+ *  `message` push arrives, read+consumed by the overlay which shows it as
+ *  a toast. Consume-on-show like NoticeState. */
+public class MessageStateData
+{
+    [JsonPropertyName("messageId")]
+    public long MessageId { get; set; }
+
+    [JsonPropertyName("text")]
+    public string Text { get; set; } = "";
+}
+
+public static class MessageState
+{
+    static readonly string Dir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "ChoreBuddy");
+    public static readonly string FilePath = Path.Combine(Dir, "message-state.json");
+    static readonly object _lock = new();
+
+    public static MessageStateData Read()
+    {
+        try
+        {
+            if (!File.Exists(FilePath)) return new MessageStateData();
+            string json;
+            lock (_lock) { json = File.ReadAllText(FilePath); }
+            return JsonSerializer.Deserialize<MessageStateData>(json) ?? new MessageStateData();
+        }
+        catch { return new MessageStateData(); }
+    }
+
+    public static void Write(MessageStateData data)
+    {
+        try
+        {
+            Directory.CreateDirectory(Dir);
+            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+            lock (_lock) { File.WriteAllText(FilePath, json); }
+        }
+        catch { }
+    }
+}
+
 public static class WarnState
 {
     static readonly string Dir = Path.Combine(

@@ -179,6 +179,10 @@ public class RemoteSync
                 else if (t.ValueKind == System.Text.Json.JsonValueKind.String) long.TryParse(t.GetString(), out timestamp);
             }
 
+            string? text = null;
+            if (dataEl.TryGetProperty("text", out var tx) && tx.ValueKind == System.Text.Json.JsonValueKind.String)
+                text = tx.GetString();
+
             if (string.IsNullOrEmpty(command)) return;
 
             lock (_applyLock)
@@ -188,7 +192,7 @@ public class RemoteSync
                 if (timestamp <= _config.LastCommandTimestamp) return;
 
                 _log($"Push command: {command} (ts={timestamp})");
-                ApplyCommand(command);
+                ApplyCommand(command, text);
                 _config.LastCommandTimestamp = timestamp;
                 ConfigStore.Save(_config);
             }
@@ -231,7 +235,7 @@ public class RemoteSync
         });
     }
 
-    void ApplyCommand(string command)
+    void ApplyCommand(string command, string? text = null)
     {
         var apps = _appProvider();
 
@@ -374,6 +378,18 @@ public class RemoteSync
                 }
                 catch (Exception ex) { _log($"Updater error: {ex.Message}"); }
             });
+        }
+        else if (command.Equals("message", StringComparison.OrdinalIgnoreCase))
+        {
+            // Manager broadcast — show the text as a toast on this PC.
+            var msg = string.IsNullOrWhiteSpace(text) ? "" : text!.Trim();
+            _log($"Push command: message — \"{msg}\"");
+            if (msg.Length > 0)
+                MessageState.Write(new MessageStateData
+                {
+                    MessageId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    Text = msg,
+                });
         }
     }
 }
