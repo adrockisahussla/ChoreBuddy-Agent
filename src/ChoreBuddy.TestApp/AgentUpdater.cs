@@ -21,7 +21,7 @@ namespace ChoreBuddy.TestApp;
 public static class AgentUpdater
 {
     // Bump this with every release; the GitHub release tag must match (vX.Y.Z).
-    public const string CurrentVersionString = "1.0.9";
+    public const string CurrentVersionString = "1.0.10";
 
     const string Owner = "adrockisahussla";
     const string Repo = "ChoreBuddy-Agent";
@@ -85,9 +85,12 @@ public static class AgentUpdater
             var psi = new ProcessStartInfo
             {
                 FileName = runnerExe,
-                UseShellExecute = true,           // detach from the service process
+                // MUST be false: a session-0 service can't ShellExecute a child
+                // (it silently never starts — why self-update never applied).
+                // CreateProcess works and the temp-copy still outlives the
+                // service stop below.
+                UseShellExecute = false,
                 CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
             };
             psi.ArgumentList.Add("--apply-update");
             psi.ArgumentList.Add(installDir);
@@ -145,6 +148,13 @@ public static class AgentUpdater
     {
         log($"--apply-update: install='{installDir}' staging='{stagingDir}'");
 
+        // Pause the watchdog (a 1-min SYSTEM scheduled task that restarts the
+        // service whenever it's not Running). If we don't, it relaunches the
+        // service mid-swap and re-locks the files, so the copy fails and the
+        // version never changes. Also clear SCM restart-on-failure as a belt.
+        RunProc("schtasks.exe", "/Change /TN ChoreBuddyAgentWatchdog /DISABLE", log);
+        RunSc($"failure {ServiceName} reset= 0 actions= \"\"", log);
+
         RunSc("stop " + ServiceName, log);
         for (var i = 0; i < 30; i++)
         {
@@ -175,6 +185,10 @@ public static class AgentUpdater
         catch { }
 
         RunSc("start " + ServiceName, log);
+
+        // Resume the watchdog + restore SCM recovery now the swap is done.
+        RunSc($"failure {ServiceName} reset= 86400 actions= restart/5000/restart/5000/restart/30000", log);
+        RunProc("schtasks.exe", "/Change /TN ChoreBuddyAgentWatchdog /ENABLE", log);
         log("--apply-update: done");
     }
 
@@ -212,6 +226,22 @@ public static class AgentUpdater
             p.WaitForExit(15000);
         }
         catch (Exception ex) { log($"sc {args} failed: {ex.Message}"); }
+    }
+
+    static void RunProc(string file, string args, Action<string> log)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = file, Arguments = args,
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+            };
+            using var p = Process.Start(psi)!;
+            p.WaitForExit(15000);
+        }
+        catch (Exception ex) { log($"{file} {args} failed: {ex.Message}"); }
     }
 
     static bool IsStopped()
