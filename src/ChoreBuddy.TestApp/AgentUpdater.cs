@@ -21,7 +21,7 @@ namespace ChoreBuddy.TestApp;
 public static class AgentUpdater
 {
     // Bump this with every release; the GitHub release tag must match (vX.Y.Z).
-    public const string CurrentVersionString = "1.0.13";
+    public const string CurrentVersionString = "1.0.14";
 
     const string Owner = "adrockisahussla";
     const string Repo = "ChoreBuddy-Agent";

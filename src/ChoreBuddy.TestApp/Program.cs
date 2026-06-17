@@ -51,6 +51,14 @@ internal static class Program
             return;
         }
 
+        if (args.Any(a => a.Equals("--gametime", StringComparison.OrdinalIgnoreCase)))
+        {
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            ApplicationConfiguration.Initialize();
+            Application.Run(new GameTimeForm());
+            return;
+        }
+
         if (args.Any(a => a.Equals("--setup", StringComparison.OrdinalIgnoreCase)))
         {
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);

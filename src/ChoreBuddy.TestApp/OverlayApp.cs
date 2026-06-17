@@ -44,6 +44,30 @@ public static class OverlayApp
 
         ApplicationConfiguration.Initialize();
 
+        // System-tray entry so the kid can open the Game Time dashboard at any
+        // time (see banked minutes, spend some for instant play). One instance;
+        // closing it just disposes — reopening makes a fresh one.
+        GameTimeForm? gameForm = null;
+        void OpenGameTime()
+        {
+            try
+            {
+                if (gameForm == null || gameForm.IsDisposed) gameForm = new GameTimeForm();
+                gameForm.Show();
+                gameForm.WindowState = FormWindowState.Normal;
+                gameForm.Activate();
+                gameForm.BringToFront();
+            }
+            catch { }
+        }
+        var tray = new NotifyIcon { Text = "ChoreBuddy — Game Time", Visible = true };
+        try { tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
+        catch { tray.Icon = SystemIcons.Application; }
+        var trayMenu = new ContextMenuStrip();
+        trayMenu.Items.Add("Open Game Time", null, (s, e) => OpenGameTime());
+        tray.ContextMenuStrip = trayMenu;
+        tray.DoubleClick += (s, e) => OpenGameTime();
+
         // Which notice/message ids we've already shown — persisted in a
         // USER-writable spot so we never touch the system-owned ProgramData files.
         var seen = OverlaySeen.Load();

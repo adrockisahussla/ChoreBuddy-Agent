@@ -150,8 +150,19 @@ public class ScheduleEnforcer
 
     void Tick()
     {
-        if (_config.SchedulePaused) return; // manual override in effect — schedule is paused
-        if (_schedule == null) return;       // no policy → leave manual state alone
+        if (_config.SchedulePaused)
+        {
+            // Manual override in effect — schedule is paused. Surface whatever
+            // state the last manual command left us in, with no fixed limit.
+            WriteGameTime(_currentState != "shutoff", -1, "manual");
+            return;
+        }
+        if (_schedule == null)
+        {
+            // No policy → leave manual state alone, but still publish status.
+            WriteGameTime(_currentState != "shutoff", -1, "none");
+            return;
+        }
 
         var now = DateTime.Now; // local time
         var dayKey = now.DayOfWeek switch
@@ -164,6 +175,7 @@ public class ScheduleEnforcer
         {
             // Day disabled → enforce shutoff.
             ApplyState("shutoff", "day disabled");
+            WriteGameTime(false, 0, "off");
             _warnArmed = true;
             return;
         }
@@ -185,8 +197,10 @@ public class ScheduleEnforcer
         var nowMs = DateTimeOffset.Now.ToUnixTimeMilliseconds();
         if (_config.BonusUntilUnix > nowMs)
         {
+            var bonusSecs = (int)((_config.BonusUntilUnix - nowMs) / 1000);
             ApplyState("allow", "bonus time");
-            MaybeWarn((int)((_config.BonusUntilUnix - nowMs) / 1000));
+            WriteGameTime(true, bonusSecs, "bonus");
+            MaybeWarn(bonusSecs);
             return;
         }
         if (_config.BonusUntilUnix != 0)
@@ -201,22 +215,27 @@ public class ScheduleEnforcer
             var startMin = ToMin(day.Start);
             var endMin = ToMin(day.End);
             var inWindow = nowMin >= startMin && nowMin < endMin;
+            var windowSecs = (endMin - nowMin) * 60 - now.Second;
             ApplyState(inWindow ? "allow" : "shutoff", inWindow ? "in window" : "outside window");
-            if (inWindow) MaybeWarn((endMin - nowMin) * 60 - now.Second);
+            WriteGameTime(inWindow, inWindow ? windowSecs : 0, "window");
+            if (inWindow) MaybeWarn(windowSecs);
             else _warnArmed = true;
         }
         else // cap
         {
             var capSeconds = (int)((day.MaxHours ?? 0) * 3600);
-            if (capSeconds <= 0) { ApplyState("shutoff", "cap=0"); _warnArmed = true; return; }
+            if (capSeconds <= 0) { ApplyState("shutoff", "cap=0"); WriteGameTime(false, 0, "cap"); _warnArmed = true; return; }
             if (_config.ScheduleCapUsedSeconds >= capSeconds)
             {
                 ApplyState("shutoff", "cap reached");
+                WriteGameTime(false, 0, "cap");
                 _warnArmed = true;
                 return;
             }
+            var capLeft = capSeconds - _config.ScheduleCapUsedSeconds;
             ApplyState("allow", $"cap {_config.ScheduleCapUsedSeconds}/{capSeconds}s used");
-            MaybeWarn(capSeconds - _config.ScheduleCapUsedSeconds);
+            WriteGameTime(true, capLeft, "cap");
+            MaybeWarn(capLeft);
             // Burn 60 s for this tick (the tick interval).
             _config.ScheduleCapUsedSeconds = Math.Min(capSeconds, _config.ScheduleCapUsedSeconds + 60);
             ConfigStore.Save(_config);
@@ -258,6 +277,25 @@ public class ScheduleEnforcer
         catch (Exception ex) { _log($"Enforcer: warn write failed — {ex.Message}"); }
     }
 
+    /** Publish the live "time left + banked minutes" snapshot read by the
+     *  Game Time window. Cheap, no network — uses the cached banked balance. */
+    void WriteGameTime(bool allowed, int secondsRemaining, string mode)
+    {
+        try
+        {
+            GameTimeStatus.Write(new GameTimeStateData
+            {
+                Allowed = allowed,
+                SecondsRemaining = secondsRemaining,
+                MinutesBanked = _availableMinutes,
+                KidName = OverlayState.Read().KidName,
+                Mode = mode,
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            });
+        }
+        catch { }
+    }
+
     // ---- Kid "use extra time" → extend session + spend banked minutes ----
 
     async Task ExtendLoop(CancellationToken ct)
@@ -294,6 +332,9 @@ public class ScheduleEnforcer
 
         await AddMinutesAsync(-mins, ct);
         ApplyState("allow", $"kid used {mins} min extra");
+        // Reflect the new session + debited wallet in the window immediately
+        // (don't wait up to 60 s for the next Tick).
+        WriteGameTime(true, (int)((_config.BonusUntilUnix - DateTimeOffset.Now.ToUnixTimeMilliseconds()) / 1000), "bonus");
         _log($"Enforcer: +{mins} min bonus (until {_config.BonusUntilUnix}), {_availableMinutes} min left");
     }
 
