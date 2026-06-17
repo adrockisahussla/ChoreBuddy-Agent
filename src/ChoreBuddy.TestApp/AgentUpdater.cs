@@ -21,7 +21,7 @@ namespace ChoreBuddy.TestApp;
 public static class AgentUpdater
 {
     // Bump this with every release; the GitHub release tag must match (vX.Y.Z).
-    public const string CurrentVersionString = "1.0.11";
+    public const string CurrentVersionString = "1.0.12";
 
     const string Owner = "adrockisahussla";
     const string Repo = "ChoreBuddy-Agent";
@@ -73,22 +73,20 @@ public static class AgentUpdater
             var newExe = Path.Combine(staging, "ChoreBuddy.TestApp.exe");
             if (!File.Exists(newExe)) { log("Update: staged exe missing, aborting"); return false; }
 
-            // Run the updater from a temp copy so the install-dir exe is free
-            // to be overwritten.
             var installDir = AppContext.BaseDirectory.TrimEnd('\\');
-            var runnerDir = Path.Combine(Path.GetTempPath(), "cb-updater");
-            try { if (Directory.Exists(runnerDir)) Directory.Delete(runnerDir, true); } catch { }
-            Directory.CreateDirectory(runnerDir);
-            var runnerExe = Path.Combine(runnerDir, "ChoreBuddy.TestApp.exe");
-            File.Copy(newExe, runnerExe, true);
 
+            // Run the updater straight from the STAGING folder. It has the full
+            // build (exe + DLLs + runtimeconfig + deps) so the apphost can
+            // actually start — copying just the .exe to a temp dir left it
+            // without its managed DLLs, so the runner never launched (the real
+            // reason self-update never applied). Running from staging is safe:
+            // ApplyUpdate copies staging -> install, so the running runner (in
+            // staging) is never the file being overwritten.
             var psi = new ProcessStartInfo
             {
-                FileName = runnerExe,
-                // MUST be false: a session-0 service can't ShellExecute a child
-                // (it silently never starts — why self-update never applied).
-                // CreateProcess works and the temp-copy still outlives the
-                // service stop below.
+                FileName = newExe,
+                WorkingDirectory = staging,
+                // false: a session-0 service can't ShellExecute a child.
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
@@ -96,7 +94,7 @@ public static class AgentUpdater
             psi.ArgumentList.Add(installDir);
             psi.ArgumentList.Add(staging);
             Process.Start(psi);
-            log($"Updater launched → service will restart on {latest}.");
+            log($"Updater launched from staging → service will restart on {latest}.");
             return true;
         }
         catch (Exception ex)
