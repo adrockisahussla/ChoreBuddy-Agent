@@ -178,7 +178,10 @@ public class UnlockToast : Form
 
         Width = 640;
         Height = 80;
-        var screen = Screen.PrimaryScreen!.Bounds;
+        // Show on the monitor the user is actually using (mouse position),
+        // not always the primary — on multi-monitor setups the toast was
+        // landing on a screen they weren't looking at, so it read as "no toast".
+        var screen = (Screen.FromPoint(Cursor.Position) ?? Screen.PrimaryScreen!).Bounds;
         Left = screen.Left + (screen.Width - Width) / 2;
         Top = screen.Top + 100;
 
@@ -236,7 +239,10 @@ public class UpdatedToast : Form
 
         Width = 620;
         Height = 76;
-        var screen = Screen.PrimaryScreen!.Bounds;
+        // Show on the monitor the user is actually using (mouse position),
+        // not always the primary — on multi-monitor setups the toast was
+        // landing on a screen they weren't looking at, so it read as "no toast".
+        var screen = (Screen.FromPoint(Cursor.Position) ?? Screen.PrimaryScreen!).Bounds;
         Left = screen.Left + (screen.Width - Width) / 2;
         Top = screen.Top + 100;
 
@@ -248,7 +254,7 @@ public class UpdatedToast : Form
         };
         fadeIn.Start();
 
-        var dismiss = new System.Windows.Forms.Timer { Interval = 4500 };
+        var dismiss = new System.Windows.Forms.Timer { Interval = 8000 };
         dismiss.Tick += (s, e) =>
         {
             dismiss.Stop();
@@ -306,7 +312,10 @@ public class MessageToast : Form
 
         Width = 680;
         Height = 130;
-        var screen = Screen.PrimaryScreen!.Bounds;
+        // Show on the monitor the user is actually using (mouse position),
+        // not always the primary — on multi-monitor setups the toast was
+        // landing on a screen they weren't looking at, so it read as "no toast".
+        var screen = (Screen.FromPoint(Cursor.Position) ?? Screen.PrimaryScreen!).Bounds;
         Left = screen.Left + (screen.Width - Width) / 2;
         Top = screen.Top + 90;
 

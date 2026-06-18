@@ -59,6 +59,17 @@ internal static class Program
             return;
         }
 
+        // Diagnostic: pop the "agent updated" toast once so its visibility can
+        // be verified without performing a real self-update.
+        var toastIdx = Array.FindIndex(args, a => a.Equals("--testtoast", StringComparison.OrdinalIgnoreCase));
+        if (toastIdx >= 0)
+        {
+            ApplicationConfiguration.Initialize();
+            var msg = toastIdx + 1 < args.Length ? args[toastIdx + 1] : "ChoreBuddy Agent updated to v1.0.14 (test)";
+            Application.Run(new UpdatedToast(msg));
+            return;
+        }
+
         if (args.Any(a => a.Equals("--setup", StringComparison.OrdinalIgnoreCase)))
         {
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
