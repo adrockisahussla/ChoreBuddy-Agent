@@ -60,10 +60,17 @@ public static class OverlayApp
             }
             catch { }
         }
-        var tray = new NotifyIcon { Text = "ChoreBuddy — Game Time", Visible = true };
+        var tray = new NotifyIcon
+        {
+            Text = $"ChoreBuddy v{AgentUpdater.CurrentVersionString} — Game Time",
+            Visible = true,
+        };
         try { tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
         catch { tray.Icon = SystemIcons.Application; }
         var trayMenu = new ContextMenuStrip();
+        var verItem = trayMenu.Items.Add($"ChoreBuddy agent v{AgentUpdater.CurrentVersionString}");
+        verItem.Enabled = false;
+        trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("Open Game Time", null, (s, e) => OpenGameTime());
         tray.ContextMenuStrip = trayMenu;
         tray.DoubleClick += (s, e) => OpenGameTime();
@@ -101,7 +108,14 @@ public static class OverlayApp
                 if (notice.NoticeId != 0 && notice.NoticeId != seen.Notice)
                 {
                     seen.Notice = notice.NoticeId; OverlaySeen.Save(seen);
-                    new UpdatedToast(notice.Message).Show();
+                    var noticeMsg = string.IsNullOrEmpty(notice.Message) ? "ChoreBuddy Agent updated" : notice.Message;
+                    // Sticky on-brand banner (stays until clicked) AND a native
+                    // Windows notification that persists in the Action Center —
+                    // because updates are usually triggered from the phone, the
+                    // user often isn't looking at the PC when the swap finishes,
+                    // so a transient toast gets missed. Both survive until seen.
+                    new UpdatedToast(noticeMsg).Show();
+                    try { tray.ShowBalloonTip(10000, "ChoreBuddy", noticeMsg, ToolTipIcon.Info); } catch { }
                 }
 
                 // Manager broadcast message — show once per id (same approach).
@@ -254,20 +268,9 @@ public class UpdatedToast : Form
         };
         fadeIn.Start();
 
-        var dismiss = new System.Windows.Forms.Timer { Interval = 8000 };
-        dismiss.Tick += (s, e) =>
-        {
-            dismiss.Stop();
-            var fadeOut = new System.Windows.Forms.Timer { Interval = 25 };
-            fadeOut.Tick += (s2, e2) =>
-            {
-                if (Opacity > 0.05) Opacity -= 0.1;
-                else { fadeOut.Stop(); Close(); }
-            };
-            fadeOut.Start();
-        };
-        dismiss.Start();
-
+        // No auto-dismiss: updates are usually triggered remotely (from the
+        // phone), so the banner must persist until the user is actually at the
+        // PC and clicks it — otherwise it fades before they ever look over.
         Click += (s, e) => Close();
         label.Click += (s, e) => Close();
     }

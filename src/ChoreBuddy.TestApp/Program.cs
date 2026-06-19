@@ -65,8 +65,16 @@ internal static class Program
         if (toastIdx >= 0)
         {
             ApplicationConfiguration.Initialize();
-            var msg = toastIdx + 1 < args.Length ? args[toastIdx + 1] : "ChoreBuddy Agent updated to v1.0.14 (test)";
-            Application.Run(new UpdatedToast(msg));
+            var msg = toastIdx + 1 < args.Length ? args[toastIdx + 1] : $"ChoreBuddy Agent updated to v{AgentUpdater.CurrentVersionString} (test)";
+            // Mirror the real overlay path: a native Action-Center notification
+            // PLUS the sticky on-brand banner.
+            var ni = new NotifyIcon { Visible = true, Text = "ChoreBuddy" };
+            try { ni.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
+            catch { ni.Icon = System.Drawing.SystemIcons.Application; }
+            ni.ShowBalloonTip(10000, "ChoreBuddy", msg, ToolTipIcon.Info);
+            var toast = new UpdatedToast(msg);
+            toast.FormClosed += (s, e) => { try { ni.Visible = false; ni.Dispose(); } catch { } Application.ExitThread(); };
+            Application.Run(toast);
             return;
         }
 
